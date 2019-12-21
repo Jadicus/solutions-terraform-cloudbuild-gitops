@@ -13,20 +13,24 @@
 # limitations under the License.
 
 
-locals {
-  network = "${element(split("-", var.subnet), 0)}"
+provider "google" {
+  project = "${var.project}"
 }
 
-resource "google_compute_firewall" "allow-http" {
-  name    = "${local.network}-allow-http"
-  network = "${local.network}"
+module "vpc" {
+  source  = "../../modules/vpc"
   project = "${var.project}"
+  env     = "${var.env}"
+}
 
-  allow {
-    protocol = "tcp"
-    ports    = ["80"]
-  }
+module "http_server" {
+  source  = "../../modules/http_server"
+  project = "${var.project}"
+  subnet  = "${module.vpc.subnet}"
+}
 
-  target_tags   = ["http-server"]
-  source_ranges = ["0.0.0.0/0"]
+module "firewall" {
+  source  = "../../modules/firewall"
+  project = "${var.project}"
+  subnet  = "${module.vpc.subnet}"
 }

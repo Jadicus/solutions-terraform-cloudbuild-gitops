@@ -16,77 +16,118 @@
 steps:
 - id: 'branch name'
   name: 'alpine'
-  entrypoint: 'sh'  
-  args: 
+  entrypoint: 'sh'
+  args:
   - '-c'
-  - | 
+  - |
       echo "***********************"
-      echo "$BRANCH_NAME"
+      echo "Branch: $BRANCH_NAME"
+      echo "Commit SHA: $COMMIT_SHA"
       echo "***********************"
 
 - id: 'tf init'
   name: 'hashicorp/terraform:0.11.14'
   entrypoint: 'sh'
-  args: 
+  args:
   - '-c'
   - |
-      if [ -d "environments/$BRANCH_NAME/" ]; then
-        cd environments/$BRANCH_NAME
-        terraform init
+      if [ -d "environments/test" ]; then
+        cd environments/test
+        terraform init -backend-config="bucket=$PROJECT_ID-tfstate" \
+          -backend-config="prefix=env/$BRANCH_NAME"
       else
-        for dir in environments/*/
-        do 
-          cd ${dir}   
-          env=${dir%*/}
-          env=${env#*/}
-          echo ""
-          echo "*************** TERRAFORM INIT ******************"
-          echo "******* At environment: ${env} ********"
-          echo "*************************************************"
-          terraform init || exit 1
-          cd ../../
-        done
-      fi 
+        echo "***************************** FAIL INIT *******************************"
+        echo "environments/test does not exist."
+        echo "*******************************************************************************"
+        exit 1
+      fi
 
 # [START tf-plan]
 - id: 'tf plan'
   name: 'hashicorp/terraform:0.11.14'
   entrypoint: 'sh'
-  args: 
+  args:
   - '-c'
-  - | 
-      if [ -d "environments/$BRANCH_NAME/" ]; then
-        cd environments/$BRANCH_NAME
-        terraform plan
+  - |
+      if [ -d "environments/test/" ]; then
+        cd environments/test
+        terraform plan -var 'env=$BRANCH_NAME' -var 'project=$PROJECT_ID' -out=tf.plan
       else
-        for dir in environments/*/
-        do 
-          cd ${dir}   
-          env=${dir%*/}
-          env=${env#*/}  
-          echo ""
-          echo "*************** TERRAFOM PLAN ******************"
-          echo "******* At environment: ${env} ********"
-          echo "*************************************************"
-          terraform plan || exit 1
-          cd ../../
-        done
-      fi 
+        echo "***************************** FAIL PLANNING *******************************"
+        echo "environments/test does not exist."
+        echo "*******************************************************************************"
+        exit 1
+      fi
 # [END tf-plan]
 
 # [START tf-apply]
 - id: 'tf apply'
   name: 'hashicorp/terraform:0.11.14'
   entrypoint: 'sh'
-  args: 
+  args:
   - '-c'
-  - | 
-      if [ -d "environments/$BRANCH_NAME/" ]; then
-        cd environments/$BRANCH_NAME      
-        terraform apply -auto-approve
+  - |
+      if [ -d "environments/test/" ]; then
+        cd environments/test
+        terraform apply -auto-approve tf.plan
       else
-        echo "***************************** SKIPPING APPLYING *******************************"
-        echo "Branch '$BRANCH_NAME' does not represent an oficial environment."
+        echo "***************************** FAIL APPLYING *******************************"
+        echo "environments/test does not exist."
         echo "*******************************************************************************"
+        exit 1
       fi
-# [END tf-apply]      
+# [END tf-apply]
+
+# [START tf-show]
+- id: 'tf show'
+  name: 'hashicorp/terraform:0.11.14'
+  entrypoint: 'sh'
+  args:
+  - '-c'
+  - |
+    if [ -d "environments/test/" ]; then
+      cd environments/test
+      terraform show > tf.show
+      if [ -f tf.show ] ; then cat tf.show ; else exit 1 ; fi
+    else
+      echo "***************************** FAIL SHOWING *******************************"
+      echo "environments/test does not exist."
+      echo "*******************************************************************************"
+      exit 1
+    fi
+# [END tf-show]
+
+# [START docker build and push]
+#- name: 'gcr.io/cloud-builders/docker'
+#  dir: 'docker'
+#  args: ['build', '-t', 'gcr.io/$PROJECT_ID/sample-test-driver', '.']
+#- name: 'gcr.io/cloud-builders/docker'
+#  dir: 'docker'
+#  args: ['push', 'gcr.io/$PROJECT_ID/sample-test-driver']
+# [END docker build and push]
+
+- id: 'run tests'
+  name: 'gcr.io/$PROJECT_ID/sample-test-driver'
+  entrypoint: 'sh'
+  args:
+    - '-c'
+    - |
+      test/run_tests.sh $BRANCH_NAME environments/test/tf.show
+
+# [START tf-destroy]
+- id: 'tf destroy'
+  name: 'hashicorp/terraform:0.11.14'
+  entrypoint: 'sh'
+  args:
+  - '-c'
+  - |
+    if [ -d "environments/test/" ]; then
+      cd environments/test
+      terraform destroy -auto-approve -var 'env=$BRANCH_NAME' -var 'project=$PROJECT_ID'
+    else
+      echo "***************************** FAIL DESTROYING *******************************"
+      echo "environments/test does not exist."
+      echo "*******************************************************************************"
+      exit 1
+    fi
+# [END tf-destroy]
